@@ -1,0 +1,91 @@
+# À chaque push sur main : scan de secrets sur tout l'historique, tests, APK de release signée, release GitHub
+# (l'APK + version.json + sha256.txt) que l'app installée lit pour se mettre à jour en deux touchers.
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  secrets:
+    name: aucun secret dans le dépôt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: gitleaks sur tout l'historique
+        run: |
+          set -e
+          V=8.21.2
+          curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar xz gitleaks
+          ./gitleaks detect --source . --no-banner --redact --exit-code 1
+      - name: aucun fichier de clé ni d'env
+        run: |
+          set -e
+          if git ls-files | grep -Ei '\.(jks|keystore|p12|pem)$|(^|/)(key\.properties|signing\.env|local\.properties|\.env)$'; then echo "fichier interdit dans le dépôt"; exit 1; fi
+          echo "ok"
+  build:
+    name: tests + APK signée + release
+    needs: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: version
+        id: v
+        run: |
+          BASE=$(tr -d ' \n' < version.txt)
+          echo "code=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+          echo "name=${BASE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - name: clé de signature (secrets GitHub, jamais dans le dépôt)
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          set -e
+          test -n "$KEYSTORE_B64" || { echo "secret KEYSTORE_B64 absent"; exit 1; }
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "DICTEE_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: tests et APK
+        env:
+          DICTEE_KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          DICTEE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          DICTEE_KEY_PASS: ${{ secrets.KEY_PASS }}
+          DICTEE_VERSION_CODE: ${{ steps.v.outputs.code }}
+          DICTEE_VERSION_NAME: ${{ steps.v.outputs.name }}
+        run: ./gradlew --no-daemon --console=plain test assembleRelease
+      - name: vérifier la signature et préparer la release
+        run: |
+          set -e
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BT/apksigner" verify --print-certs "$APK" | grep -i "SHA-256" | head -2
+          mkdir -p dist
+          cp "$APK" "dist/dictee-${{ steps.v.outputs.name }}.apk"
+          SHA=$(sha256sum "dist/dictee-${{ steps.v.outputs.name }}.apk" | cut -d' ' -f1)
+          SIZE=$(stat -c %s "dist/dictee-${{ steps.v.outputs.name }}.apk")
+          echo "$SHA  dictee-${{ steps.v.outputs.name }}.apk" > dist/sha256.txt
+          NOTES=$(git log -1 --pretty=%s | head -c 300)
+          python3 - "$SHA" "$SIZE" "$NOTES" <<'PY'
+          import json, sys
+          sha, size, notes = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+          name = "${{ steps.v.outputs.name }}"; code = int("${{ steps.v.outputs.code }}")
+          json.dump({"versionCode": code, "versionName": name, "sha256": sha, "size": size, "notes": notes,
+                     "apk": f"https://github.com/hadrien-rose/dictee-android/releases/download/v{name}/dictee-{name}.apk"},
+                    open("dist/version.json", "w"), ensure_ascii=False, indent=1)
+          PY
+          cat dist/version.json
+      - name: release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="v${{ steps.v.outputs.name }}"
+          gh release create "$TAG" dist/dictee-${{ steps.v.outputs.name }}.apk dist/version.json dist/sha256.txt \
+            --title "Dictée ${{ steps.v.outputs.name }}" --notes "$(git log -1 --pretty=%B | head -c 1500)" --latest
