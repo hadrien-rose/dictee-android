@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dictée</string>
+    <string name="notif_channel">Dictée en cours</string>
+    <string name="notif_channel_desc">La dictée qui enregistre : minuteur, Pause, Arrêter</string>
+    <string name="notif_recording">Dictée en cours</string>
+    <string name="notif_paused">Dictée en pause</string>
+    <string name="notif_in_call">Dictée en cours · appel : le son reprend au raccrochage</string>
+    <string name="act_pause">Pause</string>
+    <string name="act_resume">Reprendre</string>
+    <string name="act_stop">Arrêter</string>
+    <string name="offline_title">Pas de réseau</string>
+    <string name="offline_body">Dictée a besoin du réseau pour afficher la page. Une dictée en cours continue d\'enregistrer.</string>
+    <string name="offline_retry">Réessayer</string>
+</resources>

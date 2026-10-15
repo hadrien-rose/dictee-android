@@ -1,0 +1,21 @@
+# Jamais une clé ni un secret dans ce dépôt (public) : la signature vit dans les secrets GitHub et hors dépôt.
+*.jks
+*.keystore
+*.pem
+*.p12
+key.properties
+signing.env
+local.properties
+.env
+.env.*
+# Gradle / build
+.gradle/
+build/
+app/build/
+*.apk
+*.aab
+.kotlin/
+# IDE
+.idea/
+*.iml
+.DS_Store
